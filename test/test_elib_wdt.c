@@ -22,6 +22,7 @@ static elib_wdt_ctx_t test_ctx;
 static elib_wdt_task_t test_tasks[MAX_TASKS];
 static int feed_dog_count;
 static int on_reset_count;
+static const elib_wdt_ctx_t *on_reset_ctx_arg;
 static jmp_buf timeout_jmp;
 
 /* Mock callbacks */
@@ -29,8 +30,9 @@ static void mock_feed_dog(void) {
     feed_dog_count++;
 }
 
-static void mock_on_reset(void) {
+static void mock_on_reset(const elib_wdt_ctx_t *ctx) {
     on_reset_count++;
+    on_reset_ctx_arg = ctx;
     longjmp(timeout_jmp, 1);
 }
 
@@ -52,6 +54,7 @@ static void reset_test(void) {
     memset(&test_ctx, 0, sizeof(test_ctx));
     feed_dog_count = 0;
     on_reset_count = 0;
+    on_reset_ctx_arg = NULL;
     elib_wdt_cfg_t cfg = make_default_cfg();
     elib_wdt_init(&test_ctx, &cfg);
 }
@@ -171,8 +174,8 @@ static void test_reset_clears_runtime(void) {
     assert(err == ELIB_WDT_OK);
     assert(test_ctx.elapsed_ms == 0);
     assert(test_ctx.state == ELIB_WDT_STATE_IDLE);
-    assert(test_ctx.cfg->tasks[0].fed == 0);
-    assert(test_ctx.cfg->tasks[1].fed == 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_IDLE);
+    assert(test_ctx.cfg->tasks[1].status == ELIB_WDT_TASK_IDLE);
     /* Registrations preserved */
     assert(test_ctx.task_count == 2);
     assert(test_ctx.cfg->tasks[0].registered == 1);
@@ -200,7 +203,7 @@ static void test_register_valid(void) {
     assert(test_ctx.task_count == 1);
     assert(test_ctx.cfg->tasks[0].task_id == 0);
     assert(test_ctx.cfg->tasks[0].registered == 1);
-    assert(test_ctx.cfg->tasks[0].fed == 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_IDLE);
 }
 
 static void test_register_with_name(void) {
@@ -274,7 +277,7 @@ static void test_feed_valid(void) {
     elib_wdt_register(&test_ctx, 0, "task0");
     elib_wdt_err_t err = elib_wdt_feed(&test_ctx, 0);
     assert(err == ELIB_WDT_OK);
-    assert(test_ctx.cfg->tasks[0].fed == 1);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_FED);
 }
 
 static void test_feed_not_found(void) {
@@ -293,6 +296,54 @@ static void test_feed_not_initialized(void) {
     memset(&ctx, 0, sizeof(ctx));
     elib_wdt_err_t err = elib_wdt_feed(&ctx, 0);
     assert(err == ELIB_WDT_ERR_NOT_INITIALIZED);
+}
+
+/* --- Checkin tests --- */
+
+static void test_checkin_valid(void) {
+    reset_test();
+    elib_wdt_register(&test_ctx, 0, "task0");
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_IDLE);
+    elib_wdt_err_t err = elib_wdt_checkin(&test_ctx, 0);
+    assert(err == ELIB_WDT_OK);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_CHECKIN);
+}
+
+static void test_checkin_not_found(void) {
+    reset_test();
+    elib_wdt_err_t err = elib_wdt_checkin(&test_ctx, 99);
+    assert(err == ELIB_WDT_ERR_NOT_FOUND);
+}
+
+static void test_checkin_null_ctx(void) {
+    elib_wdt_err_t err = elib_wdt_checkin(NULL, 0);
+    assert(err == ELIB_WDT_ERR_INVALID_PARAM);
+}
+
+static void test_checkin_then_feed(void) {
+    reset_test();
+    elib_wdt_register(&test_ctx, 0, "task0");
+    elib_wdt_checkin(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_CHECKIN);
+    elib_wdt_feed(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_FED);
+}
+
+static void test_feed_without_checkin(void) {
+    reset_test();
+    elib_wdt_register(&test_ctx, 0, "task0");
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_IDLE);
+    elib_wdt_feed(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_FED);
+}
+
+static void test_checkin_does_not_overwrite_fed(void) {
+    reset_test();
+    elib_wdt_register(&test_ctx, 0, "task0");
+    elib_wdt_feed(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_FED);
+    elib_wdt_checkin(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_FED);
 }
 
 /* --- Start/Stop tests --- */
@@ -349,7 +400,7 @@ static void test_manage_null_ctx(void) {
     assert(err == ELIB_WDT_ERR_INVALID_PARAM);
 }
 
-/* All tasks fed: feed_dog called, elapsed reset, fed flags cleared */
+/* All tasks fed: feed_dog called, elapsed reset, status cleared */
 static void test_manage_all_fed(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "task0");
@@ -365,8 +416,8 @@ static void test_manage_all_fed(void) {
     assert(err == ELIB_WDT_OK);
     assert(feed_dog_count == 1);
     assert(test_ctx.elapsed_ms == 0);
-    assert(test_ctx.cfg->tasks[0].fed == 0);
-    assert(test_ctx.cfg->tasks[1].fed == 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_IDLE);
+    assert(test_ctx.cfg->tasks[1].status == ELIB_WDT_TASK_IDLE);
 }
 
 /* Not all fed, within timeout: feed_dog called, elapsed accumulates */
@@ -387,7 +438,7 @@ static void test_manage_partial_fed_within_timeout(void) {
     assert(test_ctx.elapsed_ms == 100);
 }
 
-/* Timeout: on_reset called, while(1) escaped via longjmp */
+/* Timeout: on_reset called with ctx, while(1) escaped via longjmp */
 static void test_manage_timeout_triggers_reset(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "task0");
@@ -403,6 +454,7 @@ static void test_manage_timeout_triggers_reset(void) {
         assert(0);
     }
     assert(on_reset_count == 1);
+    assert(on_reset_ctx_arg == &test_ctx);
     assert(test_ctx.state == ELIB_WDT_STATE_TIMEOUT);
 }
 
@@ -457,7 +509,7 @@ static void test_manage_late_feed_resets_window(void) {
     elib_wdt_feed(&test_ctx, 0);
     elib_wdt_manage(&test_ctx, 10);
     assert(test_ctx.elapsed_ms == 0);
-    assert(test_ctx.cfg->tasks[0].fed == 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_IDLE);
 }
 
 /* Unregister a task, then verify manage works with remaining tasks */
@@ -506,15 +558,62 @@ static void test_register_after_unregister(void) {
     assert(test_ctx.task_count == 2);
 }
 
-/* Start clears fed flags */
-static void test_start_clears_fed_flags(void) {
+/* Start clears status flags */
+static void test_start_clears_status(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "task0");
     elib_wdt_feed(&test_ctx, 0);
-    assert(test_ctx.cfg->tasks[0].fed == 1);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_FED);
 
     elib_wdt_start(&test_ctx);
-    assert(test_ctx.cfg->tasks[0].fed == 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_IDLE);
+}
+
+/* Timeout distinguishes root cause: CHECKIN = stuck, IDLE = blocked */
+static void test_timeout_distinguishes_root_cause(void) {
+    reset_test();
+    elib_wdt_register(&test_ctx, 0, "healthy");
+    elib_wdt_register(&test_ctx, 1, "stuck");
+    elib_wdt_register(&test_ctx, 2, "blocked");
+    elib_wdt_start(&test_ctx);
+
+    /* task0 feeds normally */
+    elib_wdt_feed(&test_ctx, 0);
+    /* task1 checks in but never feeds (stuck) */
+    elib_wdt_checkin(&test_ctx, 1);
+    /* task2 never checks in (blocked by stuck task) */
+
+    /* Accumulate past timeout */
+    elib_wdt_manage(&test_ctx, 500);
+
+    if (setjmp(timeout_jmp) == 0) {
+        elib_wdt_manage(&test_ctx, 600);
+        assert(0);
+    }
+
+    /* Verify task statuses at timeout */
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_FED);
+    assert(test_ctx.cfg->tasks[1].status == ELIB_WDT_TASK_CHECKIN);
+    assert(test_ctx.cfg->tasks[2].status == ELIB_WDT_TASK_IDLE);
+}
+
+/* Checkin with checkin then feed via manage cycle */
+static void test_manage_checkin_cycle(void) {
+    reset_test();
+    elib_wdt_register(&test_ctx, 0, "task0");
+    elib_wdt_start(&test_ctx);
+
+    /* Check in, then feed */
+    elib_wdt_checkin(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_CHECKIN);
+
+    elib_wdt_feed(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_FED);
+
+    feed_dog_count = 0;
+    elib_wdt_manage(&test_ctx, 10);
+    assert(feed_dog_count == 1);
+    assert(test_ctx.cfg->tasks[0].status == ELIB_WDT_TASK_IDLE);
 }
 
 int main(void) {
@@ -559,6 +658,14 @@ int main(void) {
     RUN_TEST(test_feed_null_ctx);
     RUN_TEST(test_feed_not_initialized);
 
+    /* Checkin tests */
+    RUN_TEST(test_checkin_valid);
+    RUN_TEST(test_checkin_not_found);
+    RUN_TEST(test_checkin_null_ctx);
+    RUN_TEST(test_checkin_then_feed);
+    RUN_TEST(test_feed_without_checkin);
+    RUN_TEST(test_checkin_does_not_overwrite_fed);
+
     /* Start/Stop tests */
     RUN_TEST(test_start_transitions_to_running);
     RUN_TEST(test_start_idempotent);
@@ -580,7 +687,11 @@ int main(void) {
     /* Lifecycle tests */
     RUN_TEST(test_reinit_after_deinit);
     RUN_TEST(test_register_after_unregister);
-    RUN_TEST(test_start_clears_fed_flags);
+    RUN_TEST(test_start_clears_status);
+
+    /* Diagnostic tests */
+    RUN_TEST(test_timeout_distinguishes_root_cause);
+    RUN_TEST(test_manage_checkin_cycle);
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return (tests_passed == tests_run) ? 0 : 1;

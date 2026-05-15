@@ -58,6 +58,14 @@ elib_wdt_err_t elib_wdt_unregister(elib_wdt_ctx_t *ctx, uint8_t task_id);
 elib_wdt_err_t elib_wdt_feed(elib_wdt_ctx_t *ctx, uint8_t task_id);
 
 /**
+ * @brief Check in a task to signal it has started
+ * @param ctx Context pointer
+ * @param task_id Task identifier
+ * @return elib_wdt_err_t error code
+ */
+elib_wdt_err_t elib_wdt_checkin(elib_wdt_ctx_t *ctx, uint8_t task_id);
+
+/**
  * @brief Start watchdog monitoring (IDLE -> RUNNING)
  * @param ctx Context pointer
  * @return elib_wdt_err_t error code
