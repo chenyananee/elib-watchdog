@@ -16,11 +16,6 @@ typedef enum {
     ELIB_WDT_STATE_TIMEOUT,
 } elib_wdt_state_e;
 
-/* Per-task status values */
-#define ELIB_WDT_TASK_IDLE    0
-#define ELIB_WDT_TASK_CHECKIN 1
-#define ELIB_WDT_TASK_FED     2
-
 /* Forward declaration */
 typedef struct elib_wdt_ctx elib_wdt_ctx_t;
 
@@ -32,8 +27,10 @@ typedef void (*elib_wdt_on_reset_fn)(const elib_wdt_ctx_t *ctx);
 typedef struct {
     uint8_t     task_id;
     const char *name;
-    uint8_t     status;
-    uint8_t     registered;
+    struct {
+        uint8_t fed : 1;
+        uint8_t registered : 1;
+    } bit_flags;
 } elib_wdt_task_t;
 
 /* Configuration (user provides, stored as const pointer) */
@@ -51,7 +48,9 @@ typedef struct elib_wdt_ctx {
     uint8_t               task_count;
     elib_wdt_state_e      state;
     uint32_t              elapsed_ms;
-    int                   initialized;
+    struct {
+        uint8_t initialized : 1;
+    } bit_flags;
 } elib_wdt_ctx_t;
 
 #ifdef __cplusplus
