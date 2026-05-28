@@ -50,6 +50,14 @@ elib_wdt_err_t elib_wdt_register(elib_wdt_ctx_t *ctx, uint8_t task_id,
 elib_wdt_err_t elib_wdt_unregister(elib_wdt_ctx_t *ctx, uint8_t task_id);
 
 /**
+ * @brief Check in a task to signal it has started (enables diagnosis)
+ * @param ctx Context pointer
+ * @param task_id Task identifier
+ * @return elib_wdt_err_t error code
+ */
+elib_wdt_err_t elib_wdt_checkin(elib_wdt_ctx_t *ctx, uint8_t task_id);
+
+/**
  * @brief Feed (kick) a task's software watchdog and reset its timer
  * @param ctx Context pointer
  * @param task_id Task identifier

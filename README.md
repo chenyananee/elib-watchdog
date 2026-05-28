@@ -17,10 +17,19 @@ IDLE --start()--> RUNNING --timeout--> TIMEOUT (while(1), 不返回)
 RUNNING --stop()--> IDLE
 ```
 
-## 任务计时器
+## 任务控制块
 
-每个任务有独立倒计时器 `bits.counter`，每次 `elib_wdt_manage` 递减，`elib_wdt_feed` 重装载 `timeout_ms`。
-超时时 `counter == 0`。
+每个任务在 32 位位域中有三个字段：
+
+| 字段 | 位数 | 说明 |
+|------|------|------|
+| `bits.counter` | 30 | 倒计时器，`manage` 递减，`feed`/`checkin` 重装载 `timeout_ms` |
+| `bits.started` | 1 | 诊断标记，`checkin` 置 1，`feed` 清 0 |
+| `bits.registered` | 1 | 注册标记 |
+
+超时时 `counter == 0`。结合 `started` 可诊断根因：
+- `started==1` → 任务 checkin 了但没喂狗 → **根因任务**
+- `started==0` → 任务根本还没 checkin → **被连累的任务**
 
 ## 快速上手
 
@@ -30,11 +39,15 @@ RUNNING --stop()--> IDLE
 /* 1. 实现底层回调 */
 void hw_feed_dog(void) { /* 喂硬件看门狗 */ }
 void hw_on_reset(const elib_wdt_ctx_t *ctx) {
-    /* 超时诊断：遍历任务，counter==0 的任务即为超时 */
+    /* 超时诊断：started==1 为根因，started==0 为被连累 */
     for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
         if (!ctx->cfg->tasks[i].bits.registered) continue;
-        if (ctx->cfg->tasks[i].bits.counter == 0)
-            log("TIMEOUT: %s", ctx->cfg->tasks[i].name);
+        if (ctx->cfg->tasks[i].bits.counter == 0) {
+            if (ctx->cfg->tasks[i].bits.started)
+                log("STUCK: %s", ctx->cfg->tasks[i].name);      /* 根因 */
+            else
+                log("BLOCKED: %s", ctx->cfg->tasks[i].name);    /* 被连累 */
+        }
     }
 }
 
@@ -55,18 +68,20 @@ elib_wdt_register(&wdt_ctx, 0, "sensor");
 elib_wdt_register(&wdt_ctx, 1, "comm");
 elib_wdt_start(&wdt_ctx);
 
-/* 4. 各任务在自己的循环中喂狗 */
+/* 4. 各任务在自己的循环中喂狗（可选 checkin 用于诊断） */
 void sensor_loop(void) {
     while (1) {
+        elib_wdt_checkin(&wdt_ctx, 0);  /* 签到：标记已启动 */
         read_sensor();
-        elib_wdt_feed(&wdt_ctx, 0);     /* 喂狗并重置该任务的计时器 */
+        elib_wdt_feed(&wdt_ctx, 0);     /* 喂狗：标记已完成 */
     }
 }
 
+/* 不使用 checkin 时诊断精度降低，但超时检测不受影响 */
 void comm_loop(void) {
     while (1) {
         communicate();
-        elib_wdt_feed(&wdt_ctx, 1);     /* 喂狗并重置该任务的计时器 */
+        elib_wdt_feed(&wdt_ctx, 1);     /* 直接喂狗 */
     }
 }
 
@@ -85,7 +100,8 @@ void timer_isr(void) {
 | `elib_wdt_reset(ctx)` | 重置运行状态，保留配置和注册 |
 | `elib_wdt_register(ctx, task_id, name)` | 注册监控任务 |
 | `elib_wdt_unregister(ctx, task_id)` | 注销监控任务 |
-| `elib_wdt_feed(ctx, task_id)` | 喂狗：重装载该任务的 counter = timeout_ms |
+| `elib_wdt_checkin(ctx, task_id)` | 签到：标记任务已启动，置 started=1（用于诊断） |
+| `elib_wdt_feed(ctx, task_id)` | 喂狗：清 started=0，重装载 counter = timeout_ms |
 | `elib_wdt_start(ctx)` | 启动监控 (IDLE→RUNNING) |
 | `elib_wdt_stop(ctx)` | 停止监控 (RUNNING→IDLE) |
 | `elib_wdt_manage(ctx, elapsed_ms)` | 周期性管理调用（建议在定时中断中调用） |

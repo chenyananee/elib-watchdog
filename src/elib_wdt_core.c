@@ -70,6 +70,7 @@ elib_wdt_err_t elib_wdt_reset(elib_wdt_ctx_t *ctx) {
 
     for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
         ctx->cfg->tasks[i].bits.counter = ctx->cfg->timeout_ms;
+        ctx->cfg->tasks[i].bits.started = 0;
     }
     ctx->state = ELIB_WDT_STATE_IDLE;
 
@@ -105,6 +106,7 @@ elib_wdt_err_t elib_wdt_register(elib_wdt_ctx_t *ctx, uint8_t task_id,
     ctx->cfg->tasks[slot].task_id = task_id;
     ctx->cfg->tasks[slot].name = name;
     ctx->cfg->tasks[slot].bits.counter = ctx->cfg->timeout_ms;
+    ctx->cfg->tasks[slot].bits.started = 0;
     ctx->cfg->tasks[slot].bits.registered = 1;
     ctx->task_count++;
 
@@ -155,6 +157,29 @@ elib_wdt_err_t elib_wdt_feed(elib_wdt_ctx_t *ctx, uint8_t task_id) {
     }
 
     ctx->cfg->tasks[idx].bits.counter = ctx->cfg->timeout_ms;
+    ctx->cfg->tasks[idx].bits.started = 0;
+    return ELIB_WDT_OK;
+}
+
+/* Check in a task to signal it has started */
+elib_wdt_err_t elib_wdt_checkin(elib_wdt_ctx_t *ctx, uint8_t task_id) {
+    if (ctx == NULL) {
+        return ELIB_WDT_ERR_INVALID_PARAM;
+    }
+    if (!ctx->bit_flags.initialized) {
+        return ELIB_WDT_ERR_NOT_INITIALIZED;
+    }
+    if (ctx->cfg == NULL || ctx->cfg->tasks == NULL) {
+        return ELIB_WDT_ERR_INVALID_PARAM;
+    }
+
+    int idx = find_task_index(ctx, task_id);
+    if (idx < 0) {
+        return ELIB_WDT_ERR_NOT_FOUND;
+    }
+
+    ctx->cfg->tasks[idx].bits.counter = ctx->cfg->timeout_ms;
+    ctx->cfg->tasks[idx].bits.started = 1;
     return ELIB_WDT_OK;
 }
 
@@ -177,6 +202,7 @@ elib_wdt_err_t elib_wdt_start(elib_wdt_ctx_t *ctx) {
     for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
         if (ctx->cfg->tasks[i].bits.registered) {
             ctx->cfg->tasks[i].bits.counter = ctx->cfg->timeout_ms;
+            ctx->cfg->tasks[i].bits.started = 0;
         }
     }
     ctx->state = ELIB_WDT_STATE_RUNNING;

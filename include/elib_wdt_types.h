@@ -28,7 +28,8 @@ typedef struct {
     uint8_t     task_id;
     const char *name;
     struct {
-        uint32_t counter    : 31;
+        uint32_t counter    : 30;
+        uint32_t started    : 1;
         uint32_t registered : 1;
     } bits;
 } elib_wdt_task_t;

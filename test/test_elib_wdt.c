@@ -303,32 +303,77 @@ static void test_feed_not_initialized(void) {
     assert(err == ELIB_WDT_ERR_NOT_INITIALIZED);
 }
 
-/* --- Feed tests (continued) --- */
+/* --- Checkin tests --- */
 
-/* Timeout: verify per-task counter diagnosis */
+static void test_checkin_valid(void) {
+    reset_test();
+    elib_wdt_register(&test_ctx, 0, "task0");
+    elib_wdt_err_t err = elib_wdt_checkin(&test_ctx, 0);
+    assert(err == ELIB_WDT_OK);
+    assert(test_ctx.cfg->tasks[0].bits.started == 1);
+    assert(test_ctx.cfg->tasks[0].bits.counter == test_ctx.cfg->timeout_ms);
+}
+
+static void test_checkin_then_feed(void) {
+    reset_test();
+    elib_wdt_register(&test_ctx, 0, "task0");
+    elib_wdt_checkin(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].bits.started == 1);
+    elib_wdt_feed(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].bits.started == 0);
+    assert(test_ctx.cfg->tasks[0].bits.counter == test_ctx.cfg->timeout_ms);
+}
+
+static void test_checkin_not_found(void) {
+    reset_test();
+    elib_wdt_err_t err = elib_wdt_checkin(&test_ctx, 99);
+    assert(err == ELIB_WDT_ERR_NOT_FOUND);
+}
+
+static void test_checkin_null_ctx(void) {
+    elib_wdt_err_t err = elib_wdt_checkin(NULL, 0);
+    assert(err == ELIB_WDT_ERR_INVALID_PARAM);
+}
+
+static void test_checkin_not_initialized(void) {
+    elib_wdt_ctx_t ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    elib_wdt_err_t err = elib_wdt_checkin(&ctx, 0);
+    assert(err == ELIB_WDT_ERR_NOT_INITIALIZED);
+}
+
+static void test_checkin_idempotent(void) {
+    reset_test();
+    elib_wdt_register(&test_ctx, 0, "task0");
+    elib_wdt_checkin(&test_ctx, 0);
+    elib_wdt_err_t err = elib_wdt_checkin(&test_ctx, 0);
+    assert(err == ELIB_WDT_OK);
+    assert(test_ctx.cfg->tasks[0].bits.started == 1);
+}
+
+/* Timeout: verify started bit distinguishes stuck vs collateral */
 static void test_timeout_diagnosis(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "stuck_task");
-    elib_wdt_register(&test_ctx, 1, "late_task");
+    elib_wdt_register(&test_ctx, 1, "blocked_task");
     elib_wdt_start(&test_ctx);
 
-    /* Both decrement by 600: counter = 1000-600 = 400 */
-    elib_wdt_manage(&test_ctx, 600);
-    assert(test_ctx.cfg->tasks[0].bits.counter == 400);
-    assert(test_ctx.cfg->tasks[1].bits.counter == 400);
-    /* Feed task 1: reloads to timeout_ms = 1000 */
-    elib_wdt_feed(&test_ctx, 1);
+    /* Task 0 checkin'd (started) but never feed'd -> STUCK */
+    elib_wdt_checkin(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].bits.started == 1);
+    /* Task 1 never checkin'd -> collateral (stays started=0) */
 
     if (setjmp(timeout_jmp) == 0) {
-        /* Task 0: 400-500=-100 -> 0 timeout. Task 1: 1000-500=500 */
-        elib_wdt_manage(&test_ctx, 500);
+        elib_wdt_manage(&test_ctx, 2000);
         assert(0);
     }
     assert(on_reset_count == 1);
-    /* Task 0 (never fed) reached 0 -> timeout */
+    /* Task 0: started=1, counter=0 -> root cause */
+    assert(test_ctx.cfg->tasks[0].bits.started == 1);
     assert(test_ctx.cfg->tasks[0].bits.counter == 0);
-    /* Task 1 (fed) still has 500 remaining */
-    assert(test_ctx.cfg->tasks[1].bits.counter == 500);
+    /* Task 1: started=0, counter=0 -> collateral */
+    assert(test_ctx.cfg->tasks[1].bits.started == 0);
+    assert(test_ctx.cfg->tasks[1].bits.counter == 0);
 }
 
 /* --- Start/Stop tests --- */
@@ -606,7 +651,13 @@ int main(void) {
     RUN_TEST(test_feed_null_ctx);
     RUN_TEST(test_feed_not_initialized);
 
-    /* Diagnosis test (uses feed + timeout) */
+    /* Checkin tests */
+    RUN_TEST(test_checkin_valid);
+    RUN_TEST(test_checkin_then_feed);
+    RUN_TEST(test_checkin_not_found);
+    RUN_TEST(test_checkin_null_ctx);
+    RUN_TEST(test_checkin_not_initialized);
+    RUN_TEST(test_checkin_idempotent);
     RUN_TEST(test_timeout_diagnosis);
 
     /* Start/Stop tests */
