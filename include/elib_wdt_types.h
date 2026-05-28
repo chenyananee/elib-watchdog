@@ -23,21 +23,14 @@ typedef struct elib_wdt_ctx elib_wdt_ctx_t;
 typedef void (*elib_wdt_feed_dog_fn)(void);
 typedef void (*elib_wdt_on_reset_fn)(const elib_wdt_ctx_t *ctx);
 
-/* Task status values for tri-state diagnosis */
-typedef enum {
-    ELIB_WDT_TASK_IDLE    = 0,
-    ELIB_WDT_TASK_CHECKIN = 1,
-    ELIB_WDT_TASK_FED     = 2,
-} elib_wdt_task_status_e;
-
-/* Per-task entry */
+/* Per-task entry (counter is down-counter, 0 = timeout) */
 typedef struct {
     uint8_t     task_id;
     const char *name;
     struct {
-        uint8_t status     : 2;
-        uint8_t registered : 1;
-    } bit_flags;
+        uint32_t counter    : 31;
+        uint32_t registered : 1;
+    } bits;
 } elib_wdt_task_t;
 
 /* Configuration (user provides, stored as const pointer) */
@@ -54,7 +47,6 @@ typedef struct elib_wdt_ctx {
     const elib_wdt_cfg_t *cfg;
     uint8_t               task_count;
     elib_wdt_state_e      state;
-    uint32_t              elapsed_ms;
     struct {
         uint8_t initialized : 1;
     } bit_flags;

@@ -5,7 +5,7 @@
 /* Find task slot by task_id, returns index or -1 */
 static int find_task_index(const elib_wdt_ctx_t *ctx, uint8_t task_id) {
     for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
-        if (ctx->cfg->tasks[i].bit_flags.registered && ctx->cfg->tasks[i].task_id == task_id) {
+        if (ctx->cfg->tasks[i].bits.registered && ctx->cfg->tasks[i].task_id == task_id) {
             return (int)i;
         }
     }
@@ -15,7 +15,7 @@ static int find_task_index(const elib_wdt_ctx_t *ctx, uint8_t task_id) {
 /* Find first free task slot, returns index or -1 */
 static int find_free_slot(const elib_wdt_ctx_t *ctx) {
     for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
-        if (!ctx->cfg->tasks[i].bit_flags.registered) {
+        if (!ctx->cfg->tasks[i].bits.registered) {
             return (int)i;
         }
     }
@@ -69,9 +69,8 @@ elib_wdt_err_t elib_wdt_reset(elib_wdt_ctx_t *ctx) {
     }
 
     for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
-        ctx->cfg->tasks[i].bit_flags.status = ELIB_WDT_TASK_IDLE;
+        ctx->cfg->tasks[i].bits.counter = ctx->cfg->timeout_ms;
     }
-    ctx->elapsed_ms = 0;
     ctx->state = ELIB_WDT_STATE_IDLE;
 
     return ELIB_WDT_OK;
@@ -105,8 +104,8 @@ elib_wdt_err_t elib_wdt_register(elib_wdt_ctx_t *ctx, uint8_t task_id,
 
     ctx->cfg->tasks[slot].task_id = task_id;
     ctx->cfg->tasks[slot].name = name;
-    ctx->cfg->tasks[slot].bit_flags.status = ELIB_WDT_TASK_IDLE;
-    ctx->cfg->tasks[slot].bit_flags.registered = 1;
+    ctx->cfg->tasks[slot].bits.counter = ctx->cfg->timeout_ms;
+    ctx->cfg->tasks[slot].bits.registered = 1;
     ctx->task_count++;
 
     return ELIB_WDT_OK;
@@ -129,16 +128,16 @@ elib_wdt_err_t elib_wdt_unregister(elib_wdt_ctx_t *ctx, uint8_t task_id) {
         return ELIB_WDT_ERR_NOT_FOUND;
     }
 
-    ctx->cfg->tasks[idx].bit_flags.registered = 0;
+    ctx->cfg->tasks[idx].bits.registered = 0;
     ctx->cfg->tasks[idx].task_id = 0;
     ctx->cfg->tasks[idx].name = NULL;
-    ctx->cfg->tasks[idx].bit_flags.status = 0;
+    ctx->cfg->tasks[idx].bits.counter = 0;
     ctx->task_count--;
 
     return ELIB_WDT_OK;
 }
 
-/* Feed a task's software watchdog */
+/* Feed a task's software watchdog and reset its timer */
 elib_wdt_err_t elib_wdt_feed(elib_wdt_ctx_t *ctx, uint8_t task_id) {
     if (ctx == NULL) {
         return ELIB_WDT_ERR_INVALID_PARAM;
@@ -155,28 +154,7 @@ elib_wdt_err_t elib_wdt_feed(elib_wdt_ctx_t *ctx, uint8_t task_id) {
         return ELIB_WDT_ERR_NOT_FOUND;
     }
 
-    ctx->cfg->tasks[idx].bit_flags.status = ELIB_WDT_TASK_FED;
-    return ELIB_WDT_OK;
-}
-
-/* Check in a task to signal it has started */
-elib_wdt_err_t elib_wdt_checkin(elib_wdt_ctx_t *ctx, uint8_t task_id) {
-    if (ctx == NULL) {
-        return ELIB_WDT_ERR_INVALID_PARAM;
-    }
-    if (!ctx->bit_flags.initialized) {
-        return ELIB_WDT_ERR_NOT_INITIALIZED;
-    }
-    if (ctx->cfg == NULL || ctx->cfg->tasks == NULL) {
-        return ELIB_WDT_ERR_INVALID_PARAM;
-    }
-
-    int idx = find_task_index(ctx, task_id);
-    if (idx < 0) {
-        return ELIB_WDT_ERR_NOT_FOUND;
-    }
-
-    ctx->cfg->tasks[idx].bit_flags.status = ELIB_WDT_TASK_CHECKIN;
+    ctx->cfg->tasks[idx].bits.counter = ctx->cfg->timeout_ms;
     return ELIB_WDT_OK;
 }
 
@@ -197,11 +175,10 @@ elib_wdt_err_t elib_wdt_start(elib_wdt_ctx_t *ctx) {
     }
 
     for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
-        if (ctx->cfg->tasks[i].bit_flags.registered) {
-            ctx->cfg->tasks[i].bit_flags.status = ELIB_WDT_TASK_IDLE;
+        if (ctx->cfg->tasks[i].bits.registered) {
+            ctx->cfg->tasks[i].bits.counter = ctx->cfg->timeout_ms;
         }
     }
-    ctx->elapsed_ms = 0;
     ctx->state = ELIB_WDT_STATE_RUNNING;
 
     return ELIB_WDT_OK;
@@ -241,37 +218,25 @@ elib_wdt_err_t elib_wdt_manage(elib_wdt_ctx_t *ctx, uint32_t elapsed_ms) {
         return ELIB_WDT_OK;
     }
 
-    /* Check if all registered tasks have been fed */
-    uint8_t all_fed = 1;
+    /* Decrement all registered task counters, check if any reaches 0 */
+    uint8_t timeout = 0;
     for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
-        if (ctx->cfg->tasks[i].bit_flags.registered &&
-            ctx->cfg->tasks[i].bit_flags.status != ELIB_WDT_TASK_FED) {
-            all_fed = 0;
-            break;
+        if (ctx->cfg->tasks[i].bits.registered) {
+            if (ctx->cfg->tasks[i].bits.counter <= elapsed_ms) {
+                ctx->cfg->tasks[i].bits.counter = 0;
+                timeout = 1;
+            } else {
+                ctx->cfg->tasks[i].bits.counter -= elapsed_ms;
+            }
         }
     }
 
-    if (all_fed) {
-        /* All tasks healthy: reset window, feed hardware dog */
-        ctx->elapsed_ms = 0;
-        for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
-            if (ctx->cfg->tasks[i].bit_flags.registered) {
-                ctx->cfg->tasks[i].bit_flags.status = ELIB_WDT_TASK_IDLE;
-            }
-        }
-        ctx->cfg->feed_dog();
+    if (timeout) {
+        ctx->state = ELIB_WDT_STATE_TIMEOUT;
+        ctx->cfg->on_reset(ctx);
+        while (1) {}
     } else {
-        /* Not all tasks fed: accumulate time */
-        ctx->elapsed_ms += elapsed_ms;
-        if (ctx->elapsed_ms >= ctx->cfg->timeout_ms) {
-            /* Timeout: stop feeding, call reset, halt */
-            ctx->state = ELIB_WDT_STATE_TIMEOUT;
-            ctx->cfg->on_reset(ctx);
-            while (1) {}
-        } else {
-            /* Within grace period: keep hardware alive */
-            ctx->cfg->feed_dog();
-        }
+        ctx->cfg->feed_dog();
     }
 
     return ELIB_WDT_OK;

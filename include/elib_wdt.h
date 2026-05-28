@@ -50,20 +50,12 @@ elib_wdt_err_t elib_wdt_register(elib_wdt_ctx_t *ctx, uint8_t task_id,
 elib_wdt_err_t elib_wdt_unregister(elib_wdt_ctx_t *ctx, uint8_t task_id);
 
 /**
- * @brief Feed (kick) a task's software watchdog
+ * @brief Feed (kick) a task's software watchdog and reset its timer
  * @param ctx Context pointer
  * @param task_id Task identifier
  * @return elib_wdt_err_t error code
  */
 elib_wdt_err_t elib_wdt_feed(elib_wdt_ctx_t *ctx, uint8_t task_id);
-
-/**
- * @brief Check in a task to signal it has started
- * @param ctx Context pointer
- * @param task_id Task identifier
- * @return elib_wdt_err_t error code
- */
-elib_wdt_err_t elib_wdt_checkin(elib_wdt_ctx_t *ctx, uint8_t task_id);
 
 /**
  * @brief Start watchdog monitoring (IDLE -> RUNNING)
@@ -81,9 +73,9 @@ elib_wdt_err_t elib_wdt_stop(elib_wdt_ctx_t *ctx);
 
 /**
  * @brief Manage watchdog - call from timer ISR.
- *        When running: checks all tasks, feeds hardware watchdog if healthy,
- *        accumulates time if not. On timeout, stops feeding hardware watchdog,
- *        calls on_reset callback, and enters while(1).
+ *        When running: accumulates time per-task, feeds hardware watchdog if healthy,
+ *        triggers timeout if any task's timer exceeds timeout_ms.
+ *        On timeout, calls on_reset callback and enters while(1).
  * @param ctx Context pointer
  * @param elapsed_ms Milliseconds since last call
  * @return elib_wdt_err_t error code (never returns on timeout)

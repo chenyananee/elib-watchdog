@@ -78,7 +78,6 @@ static void test_init_valid(void) {
     assert(ctx.cfg == &cfg);
     assert(ctx.state == ELIB_WDT_STATE_IDLE);
     assert(ctx.task_count == 0);
-    assert(ctx.elapsed_ms == 0);
 }
 
 static void test_init_null_ctx(void) {
@@ -167,19 +166,20 @@ static void test_reset_clears_runtime(void) {
     elib_wdt_register(&test_ctx, 0, "task0");
     elib_wdt_register(&test_ctx, 1, "task1");
     elib_wdt_start(&test_ctx);
-    elib_wdt_feed(&test_ctx, 0);
-    test_ctx.elapsed_ms = 500;
+
+    /* Decrement to 500 remaining */
+    elib_wdt_manage(&test_ctx, 500);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 500);
 
     elib_wdt_err_t err = elib_wdt_reset(&test_ctx);
     assert(err == ELIB_WDT_OK);
-    assert(test_ctx.elapsed_ms == 0);
     assert(test_ctx.state == ELIB_WDT_STATE_IDLE);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_IDLE);
-    assert(test_ctx.cfg->tasks[1].bit_flags.status == ELIB_WDT_TASK_IDLE);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 1000);
+    assert(test_ctx.cfg->tasks[1].bits.counter == 1000);
     /* Registrations preserved */
     assert(test_ctx.task_count == 2);
-    assert(test_ctx.cfg->tasks[0].bit_flags.registered == 1);
-    assert(test_ctx.cfg->tasks[1].bit_flags.registered == 1);
+    assert(test_ctx.cfg->tasks[0].bits.registered == 1);
+    assert(test_ctx.cfg->tasks[1].bits.registered == 1);
 }
 
 static void test_reset_null_ctx(void) {
@@ -202,8 +202,8 @@ static void test_register_valid(void) {
     assert(err == ELIB_WDT_OK);
     assert(test_ctx.task_count == 1);
     assert(test_ctx.cfg->tasks[0].task_id == 0);
-    assert(test_ctx.cfg->tasks[0].bit_flags.registered == 1);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_IDLE);
+    assert(test_ctx.cfg->tasks[0].bits.registered == 1);
+    assert(test_ctx.cfg->tasks[0].bits.counter == test_ctx.cfg->timeout_ms);
 }
 
 static void test_register_with_name(void) {
@@ -252,9 +252,9 @@ static void test_unregister_valid(void) {
     elib_wdt_err_t err = elib_wdt_unregister(&test_ctx, 0);
     assert(err == ELIB_WDT_OK);
     assert(test_ctx.task_count == 1);
-    assert(test_ctx.cfg->tasks[0].bit_flags.registered == 0);
+    assert(test_ctx.cfg->tasks[0].bits.registered == 0);
     /* Task 1 still registered */
-    assert(test_ctx.cfg->tasks[1].bit_flags.registered == 1);
+    assert(test_ctx.cfg->tasks[1].bits.registered == 1);
     assert(test_ctx.cfg->tasks[1].task_id == 1);
 }
 
@@ -275,9 +275,14 @@ static void test_unregister_null_ctx(void) {
 static void test_feed_valid(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "task0");
+    elib_wdt_start(&test_ctx);
+    /* Register sets counter = timeout_ms = 1000, manage decrements */
+    elib_wdt_manage(&test_ctx, 300);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 700);
+    /* Feed reloads counter to timeout_ms */
     elib_wdt_err_t err = elib_wdt_feed(&test_ctx, 0);
     assert(err == ELIB_WDT_OK);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_FED);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 1000);
 }
 
 static void test_feed_not_found(void) {
@@ -298,69 +303,32 @@ static void test_feed_not_initialized(void) {
     assert(err == ELIB_WDT_ERR_NOT_INITIALIZED);
 }
 
-/* --- Checkin tests --- */
+/* --- Feed tests (continued) --- */
 
-static void test_checkin_valid(void) {
-    reset_test();
-    elib_wdt_register(&test_ctx, 0, "task0");
-    elib_wdt_err_t err = elib_wdt_checkin(&test_ctx, 0);
-    assert(err == ELIB_WDT_OK);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_CHECKIN);
-}
-
-static void test_checkin_then_feed(void) {
-    reset_test();
-    elib_wdt_register(&test_ctx, 0, "task0");
-    elib_wdt_checkin(&test_ctx, 0);
-    elib_wdt_feed(&test_ctx, 0);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_FED);
-}
-
-static void test_checkin_not_found(void) {
-    reset_test();
-    elib_wdt_err_t err = elib_wdt_checkin(&test_ctx, 99);
-    assert(err == ELIB_WDT_ERR_NOT_FOUND);
-}
-
-static void test_checkin_null_ctx(void) {
-    elib_wdt_err_t err = elib_wdt_checkin(NULL, 0);
-    assert(err == ELIB_WDT_ERR_INVALID_PARAM);
-}
-
-static void test_checkin_not_initialized(void) {
-    elib_wdt_ctx_t ctx;
-    memset(&ctx, 0, sizeof(ctx));
-    elib_wdt_err_t err = elib_wdt_checkin(&ctx, 0);
-    assert(err == ELIB_WDT_ERR_NOT_INITIALIZED);
-}
-
-static void test_checkin_idempotent(void) {
-    reset_test();
-    elib_wdt_register(&test_ctx, 0, "task0");
-    elib_wdt_checkin(&test_ctx, 0);
-    elib_wdt_err_t err = elib_wdt_checkin(&test_ctx, 0);
-    assert(err == ELIB_WDT_OK);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_CHECKIN);
-}
-
-/* Timeout: verify diagnostic status values distinguish stuck vs blocked */
+/* Timeout: verify per-task counter diagnosis */
 static void test_timeout_diagnosis(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "stuck_task");
-    elib_wdt_register(&test_ctx, 1, "blocked_task");
+    elib_wdt_register(&test_ctx, 1, "late_task");
     elib_wdt_start(&test_ctx);
 
-    /* Task 0 checks in (starts) but never feeds -> STUCK */
-    elib_wdt_checkin(&test_ctx, 0);
-    /* Task 1 never checks in -> BLOCKED (stays IDLE) */
+    /* Both decrement by 600: counter = 1000-600 = 400 */
+    elib_wdt_manage(&test_ctx, 600);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 400);
+    assert(test_ctx.cfg->tasks[1].bits.counter == 400);
+    /* Feed task 1: reloads to timeout_ms = 1000 */
+    elib_wdt_feed(&test_ctx, 1);
 
     if (setjmp(timeout_jmp) == 0) {
-        elib_wdt_manage(&test_ctx, 2000);
+        /* Task 0: 400-500=-100 -> 0 timeout. Task 1: 1000-500=500 */
+        elib_wdt_manage(&test_ctx, 500);
         assert(0);
     }
     assert(on_reset_count == 1);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_CHECKIN);
-    assert(test_ctx.cfg->tasks[1].bit_flags.status == ELIB_WDT_TASK_IDLE);
+    /* Task 0 (never fed) reached 0 -> timeout */
+    assert(test_ctx.cfg->tasks[0].bits.counter == 0);
+    /* Task 1 (fed) still has 500 remaining */
+    assert(test_ctx.cfg->tasks[1].bits.counter == 500);
 }
 
 /* --- Start/Stop tests --- */
@@ -370,7 +338,6 @@ static void test_start_transitions_to_running(void) {
     elib_wdt_err_t err = elib_wdt_start(&test_ctx);
     assert(err == ELIB_WDT_OK);
     assert(test_ctx.state == ELIB_WDT_STATE_RUNNING);
-    assert(test_ctx.elapsed_ms == 0);
 }
 
 static void test_start_idempotent(void) {
@@ -417,7 +384,7 @@ static void test_manage_null_ctx(void) {
     assert(err == ELIB_WDT_ERR_INVALID_PARAM);
 }
 
-/* All tasks fed: feed_dog called, elapsed reset, fed cleared */
+/* All tasks fed: counters reloaded to timeout_ms, decrement 10ms each */
 static void test_manage_all_fed(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "task0");
@@ -432,19 +399,19 @@ static void test_manage_all_fed(void) {
 
     assert(err == ELIB_WDT_OK);
     assert(feed_dog_count == 1);
-    assert(test_ctx.elapsed_ms == 0);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_IDLE);
-    assert(test_ctx.cfg->tasks[1].bit_flags.status == ELIB_WDT_TASK_IDLE);
+    /* All counters decrement from timeout_ms = 1000 */
+    assert(test_ctx.cfg->tasks[0].bits.counter == 990);
+    assert(test_ctx.cfg->tasks[1].bits.counter == 990);
 }
 
-/* Not all fed, within timeout: feed_dog called, elapsed accumulates */
+/* All tasks within timeout: feed_dog called, each decrements */
 static void test_manage_partial_fed_within_timeout(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "task0");
     elib_wdt_register(&test_ctx, 1, "task1");
     elib_wdt_start(&test_ctx);
 
-    /* Feed only task 0 */
+    /* Feed task 0 (reloads to timeout_ms = 1000) */
     elib_wdt_feed(&test_ctx, 0);
 
     feed_dog_count = 0;
@@ -452,7 +419,9 @@ static void test_manage_partial_fed_within_timeout(void) {
 
     assert(err == ELIB_WDT_OK);
     assert(feed_dog_count == 1);
-    assert(test_ctx.elapsed_ms == 100);
+    /* Both decrement from 1000 by 100 */
+    assert(test_ctx.cfg->tasks[0].bits.counter == 900);
+    assert(test_ctx.cfg->tasks[1].bits.counter == 900);
 }
 
 /* Timeout: on_reset called with ctx, while(1) escaped via longjmp */
@@ -461,18 +430,15 @@ static void test_manage_timeout_triggers_reset(void) {
     elib_wdt_register(&test_ctx, 0, "task0");
     elib_wdt_start(&test_ctx);
 
-    /* Do NOT feed task 0, accumulate to just under timeout */
-    elib_wdt_manage(&test_ctx, 500);
-
-    /* This call pushes past timeout -> on_reset + while(1) */
+    /* Do NOT feed task 0, decrement 1100ms > 1000ms counter -> 0 */
     if (setjmp(timeout_jmp) == 0) {
-        elib_wdt_manage(&test_ctx, 600);
-        /* Should not reach here */
+        elib_wdt_manage(&test_ctx, 1100);
         assert(0);
     }
     assert(on_reset_count == 1);
     assert(on_reset_ctx_arg == &test_ctx);
     assert(test_ctx.state == ELIB_WDT_STATE_TIMEOUT);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 0);
 }
 
 /* No tasks registered: feed_dog called */
@@ -494,39 +460,48 @@ static void test_manage_multi_cycle(void) {
     elib_wdt_register(&test_ctx, 1, "task1");
     elib_wdt_start(&test_ctx);
 
-    /* Cycle 1: only task 0 fed */
+    /* Cycle 1: feed task 0 (reloads to 1000), manage 100ms */
     elib_wdt_feed(&test_ctx, 0);
     elib_wdt_manage(&test_ctx, 100);
-    assert(test_ctx.elapsed_ms == 100);
+    /* Both decrement from 1000 by 100 */
+    assert(test_ctx.cfg->tasks[0].bits.counter == 900);
+    assert(test_ctx.cfg->tasks[1].bits.counter == 900);
 
-    /* Cycle 2: both fed -> window resets */
+    /* Cycle 2: feed both (reload to 1000), manage 100ms */
     elib_wdt_feed(&test_ctx, 0);
     elib_wdt_feed(&test_ctx, 1);
     feed_dog_count = 0;
     elib_wdt_manage(&test_ctx, 100);
-    assert(test_ctx.elapsed_ms == 0);
+    /* Both reloaded to 1000, then decrement to 900 */
+    assert(test_ctx.cfg->tasks[0].bits.counter == 900);
+    assert(test_ctx.cfg->tasks[1].bits.counter == 900);
     assert(feed_dog_count == 1);
 
-    /* Cycle 3: no feeding -> accumulates again */
+    /* Cycle 3: no feeding, both decrement another 200ms */
     elib_wdt_manage(&test_ctx, 200);
-    assert(test_ctx.elapsed_ms == 200);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 700);
+    assert(test_ctx.cfg->tasks[1].bits.counter == 700);
 }
 
-/* Feed task after partial accumulation -> full reset of window */
+/* Feed task after partial decrement -> reloads its counter */
 static void test_manage_late_feed_resets_window(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "task0");
     elib_wdt_start(&test_ctx);
 
-    /* Accumulate 500ms without feeding */
+    /* Decrement 500ms: counter = 1000-500 = 500 */
     elib_wdt_manage(&test_ctx, 500);
-    assert(test_ctx.elapsed_ms == 500);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 500);
 
-    /* Now feed the task */
+    /* Feed reloads to timeout_ms */
     elib_wdt_feed(&test_ctx, 0);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 1000);
+
+    /* Manage decrements again */
+    feed_dog_count = 0;
     elib_wdt_manage(&test_ctx, 10);
-    assert(test_ctx.elapsed_ms == 0);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_IDLE);
+    assert(feed_dog_count == 1);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 990);
 }
 
 /* Unregister a task, then verify manage works with remaining tasks */
@@ -536,7 +511,7 @@ static void test_manage_after_unregister(void) {
     elib_wdt_register(&test_ctx, 1, "task1");
     elib_wdt_start(&test_ctx);
 
-    /* Feed only task 0, unregister task 1 */
+    /* Feed task 0 (reloads to 1000), unregister task 1 */
     elib_wdt_feed(&test_ctx, 0);
     elib_wdt_unregister(&test_ctx, 1);
 
@@ -544,7 +519,7 @@ static void test_manage_after_unregister(void) {
     elib_wdt_err_t err = elib_wdt_manage(&test_ctx, 10);
     assert(err == ELIB_WDT_OK);
     assert(feed_dog_count == 1);
-    assert(test_ctx.elapsed_ms == 0);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 990);
 }
 
 /* Re-init after deinit should succeed */
@@ -575,15 +550,18 @@ static void test_register_after_unregister(void) {
     assert(test_ctx.task_count == 2);
 }
 
-/* Start clears fed flags */
+/* Start reloads task counters to timeout_ms */
 static void test_start_clears_fed_flags(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "task0");
-    elib_wdt_feed(&test_ctx, 0);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_FED);
-
     elib_wdt_start(&test_ctx);
-    assert(test_ctx.cfg->tasks[0].bit_flags.status == ELIB_WDT_TASK_IDLE);
+    elib_wdt_manage(&test_ctx, 500);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 500);
+
+    /* Restart: reloads all counters to timeout_ms */
+    elib_wdt_stop(&test_ctx);
+    elib_wdt_start(&test_ctx);
+    assert(test_ctx.cfg->tasks[0].bits.counter == 1000);
 }
 
 int main(void) {
@@ -628,13 +606,7 @@ int main(void) {
     RUN_TEST(test_feed_null_ctx);
     RUN_TEST(test_feed_not_initialized);
 
-    /* Checkin tests */
-    RUN_TEST(test_checkin_valid);
-    RUN_TEST(test_checkin_then_feed);
-    RUN_TEST(test_checkin_not_found);
-    RUN_TEST(test_checkin_null_ctx);
-    RUN_TEST(test_checkin_not_initialized);
-    RUN_TEST(test_checkin_idempotent);
+    /* Diagnosis test (uses feed + timeout) */
     RUN_TEST(test_timeout_diagnosis);
 
     /* Start/Stop tests */
