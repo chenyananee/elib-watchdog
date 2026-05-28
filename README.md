@@ -23,7 +23,7 @@ RUNNING --stop()--> IDLE
 
 | 字段 | 位数 | 说明 |
 |------|------|------|
-| `bits.counter` | 30 | 倒计时器，`manage` 递减，`feed`/`checkin` 重装载 `timeout_ms` |
+| `bits.counter` | 30 | 倒计时器，`manage` 递减，仅 `feed` 重装载 `timeout_ms` |
 | `bits.started` | 1 | 诊断标记，`checkin` 置 1，`feed` 清 0 |
 | `bits.registered` | 1 | 注册标记 |
 
@@ -100,7 +100,7 @@ void timer_isr(void) {
 | `elib_wdt_reset(ctx)` | 重置运行状态，保留配置和注册 |
 | `elib_wdt_register(ctx, task_id, name)` | 注册监控任务 |
 | `elib_wdt_unregister(ctx, task_id)` | 注销监控任务 |
-| `elib_wdt_checkin(ctx, task_id)` | 签到：标记任务已启动，置 started=1（用于诊断） |
+| `elib_wdt_checkin(ctx, task_id)` | 签到：标记任务已启动，置 started=1（仅诊断，不干涉计时器） |
 | `elib_wdt_feed(ctx, task_id)` | 喂狗：清 started=0，重装载 counter = timeout_ms |
 | `elib_wdt_start(ctx)` | 启动监控 (IDLE→RUNNING) |
 | `elib_wdt_stop(ctx)` | 停止监控 (RUNNING→IDLE) |

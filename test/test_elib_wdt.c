@@ -308,9 +308,11 @@ static void test_feed_not_initialized(void) {
 static void test_checkin_valid(void) {
     reset_test();
     elib_wdt_register(&test_ctx, 0, "task0");
+    assert(test_ctx.cfg->tasks[0].bits.started == 0);
     elib_wdt_err_t err = elib_wdt_checkin(&test_ctx, 0);
     assert(err == ELIB_WDT_OK);
     assert(test_ctx.cfg->tasks[0].bits.started == 1);
+    /* checkin does NOT reload counter */
     assert(test_ctx.cfg->tasks[0].bits.counter == test_ctx.cfg->timeout_ms);
 }
 
@@ -319,6 +321,7 @@ static void test_checkin_then_feed(void) {
     elib_wdt_register(&test_ctx, 0, "task0");
     elib_wdt_checkin(&test_ctx, 0);
     assert(test_ctx.cfg->tasks[0].bits.started == 1);
+    /* checkin doesn't touch counter, feed reloads it */
     elib_wdt_feed(&test_ctx, 0);
     assert(test_ctx.cfg->tasks[0].bits.started == 0);
     assert(test_ctx.cfg->tasks[0].bits.counter == test_ctx.cfg->timeout_ms);

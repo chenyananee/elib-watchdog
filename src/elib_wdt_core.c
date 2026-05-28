@@ -178,7 +178,6 @@ elib_wdt_err_t elib_wdt_checkin(elib_wdt_ctx_t *ctx, uint8_t task_id) {
         return ELIB_WDT_ERR_NOT_FOUND;
     }
 
-    ctx->cfg->tasks[idx].bits.counter = ctx->cfg->timeout_ms;
     ctx->cfg->tasks[idx].bits.started = 1;
     return ELIB_WDT_OK;
 }
