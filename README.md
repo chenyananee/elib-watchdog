@@ -44,10 +44,10 @@ void hw_feed_dog(void) { /* 喂硬件看门狗 */ }
 void hw_on_reset(const elib_wdt_ctx_t *ctx) {
     /* 超时诊断：遍历任务状态 */
     for (uint8_t i = 0; i < ctx->cfg->max_tasks; i++) {
-        if (!ctx->cfg->tasks[i].registered) continue;
-        if (ctx->cfg->tasks[i].status == ELIB_WDT_TASK_CHECKIN)
+        if (!ctx->cfg->tasks[i].bit_flags.registered) continue;
+        if (ctx->cfg->tasks[i].bit_flags.status == ELIB_WDT_TASK_CHECKIN)
             log("STUCK: %s", ctx->cfg->tasks[i].name);   /* 根因 */
-        else if (ctx->cfg->tasks[i].status == ELIB_WDT_TASK_IDLE)
+        else if (ctx->cfg->tasks[i].bit_flags.status == ELIB_WDT_TASK_IDLE)
             log("BLOCKED: %s", ctx->cfg->tasks[i].name);  /* 被连累 */
     }
 }
