@@ -1,3 +1,5 @@
+**简体中文** | [English](README.en.md)
+
 # elib-watchdog
 
 资源受限嵌入式系统用的多任务软件看门狗：零动态内存、零全局变量、纯 C99，单头伞 API。
